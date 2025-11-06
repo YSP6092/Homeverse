@@ -6,30 +6,14 @@ from datetime import datetime, timedelta
 import json
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
-import pickle
-import os
-from dotenv import load_dotenv
-from pymongo import MongoClient
 import os
 
-load_dotenv()
-MONGO_URI = os.getenv("MONGO_URI")
-print("DEBUG: MONGO_URI loaded?", bool(MONGO_URI))
-
-# Try connect
-try:
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    client.admin.command('ping')
-    db = client.get_database(os.getenv("DB_NAME", "homeverse_db"))
-    print("✅ MongoDB connected:", db.name)
-except Exception as e:
-    print("❌ MongoDB connection failed:", str(e))
-    db = None
 app = Flask(__name__)
-# Update the CORS line
+
+# CORS Configuration
 CORS(app, resources={
     r"/*": {
-        "origins": "*",  # We'll restrict this after deployment
+        "origins": "*",
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type"]
     }
@@ -48,9 +32,7 @@ class PropertyPricePredictor:
         np.random.seed(42)
         n_samples = 1000
         
-        # Features: zone_encoded, bedrooms, sqft, property_type, age, floor, amenities_count
         data = []
-        
         zones = {'central': 4500, 'east': 4200, 'west': 4800, 'south': 3800, 'north': 3200, 'outskirts': 2500}
         
         for _ in range(n_samples):
@@ -64,12 +46,11 @@ class PropertyPricePredictor:
             floor = np.random.randint(0, 15)
             amenities_count = np.random.randint(0, 8)
             
-            # Calculate price with some noise
             floor_mult = 1.0 if floor <= 3 else 1.05 if floor <= 7 else 1.1
             amenities_mult = 1.0 + (amenities_count * 0.01)
             
             price = base_rate * sqft * bedrooms * 0.3 * property_type * age * floor_mult * amenities_mult
-            price += np.random.normal(0, price * 0.05)  # Add noise
+            price += np.random.normal(0, price * 0.05)
             
             data.append([
                 list(zones.keys()).index(zone),
@@ -90,16 +71,12 @@ class PropertyPricePredictor:
         """Train the ML model"""
         print("🤖 Training ML model...")
         
-        # Generate training data
         df = self.generate_training_data()
-        
         X = df.drop('price', axis=1)
         y = df['price']
         
-        # Scale features
         X_scaled = self.scaler.fit_transform(X)
         
-        # Train Random Forest model
         self.model = RandomForestRegressor(
             n_estimators=100,
             max_depth=20,
@@ -119,7 +96,6 @@ class PropertyPricePredictor:
         features_scaled = self.scaler.transform([features])
         prediction = self.model.predict(features_scaled)[0]
         
-        # Get feature importance for explanation
         importance = dict(zip(
             ['zone', 'bedrooms', 'sqft', 'property_type', 'age', 'floor', 'amenities'],
             self.model.feature_importances_
@@ -130,13 +106,13 @@ class PropertyPricePredictor:
 # Initialize predictor
 ml_predictor = PropertyPricePredictor()
 
-# Enhanced Nagpur Data with ML
+# Nagpur Data
 NAGPUR_ZONES = {
     'central': {
         'name': 'Central Nagpur',
         'base_price': 4500,
         'localities': ['Sitabuldi', 'Dharampeth', 'Mahal', 'Gandhibagh', 'Bajaj Nagar'],
-        'growth_rate': 12.5,  # Annual growth %
+        'growth_rate': 12.5,
         'demand_index': 85,
         'supply_index': 60
     },
@@ -210,22 +186,20 @@ def predict_zone(location):
 def calculate_price_ml(data):
     """ML-enhanced price calculation"""
     location = data.get('location', '')
-    bedrooms = int(data.get('bedrooms', '2').replace('+', ''))
+    bedrooms = int(str(data.get('bedrooms', '2')).replace('+', ''))
     sqft = float(data.get('sqft', 1000))
     property_type = data.get('propertyType', {})
     building_age = data.get('buildingAge', {})
     floor = data.get('floor', 1)
     amenities = data.get('amenities', [])
     
-    # Predict zone
     zone, confidence, matched = predict_zone(location)
     zone_encoded = list(NAGPUR_ZONES.keys()).index(zone)
     
-    # Prepare features for ML model
     property_type_mult = property_type.get('multiplier', 1.0) if property_type else 1.0
     age_mult = building_age.get('multiplier', 1.0) if building_age else 1.0
     floor_num = floor if isinstance(floor, int) else 0
-    amenities_count = len(amenities)
+    amenities_count = len(amenities) if amenities else 0
     
     features = [
         zone_encoded,
@@ -237,17 +211,13 @@ def calculate_price_ml(data):
         amenities_count
     ]
     
-    # Get ML prediction
     ml_price, feature_importance = ml_predictor.predict(features)
-    
-    # Add additional costs
-    additional_costs = sum(a.get('price', 0) for a in amenities if 'price' in a)
-    
+    additional_costs = sum(a.get('price', 0) for a in amenities if isinstance(a, dict) and 'price' in a)
     final_price = int(ml_price + additional_costs)
     
     return {
         'price': final_price,
-        'pricePerSqft': int(final_price / sqft),
+        'pricePerSqft': int(final_price / sqft) if sqft > 0 else 0,
         'breakdown': {
             'baseRate': NAGPUR_ZONES[zone]['base_price'],
             'mlPrediction': int(ml_price),
@@ -290,12 +260,12 @@ def home():
         ]
     })
 
-@app.route('/predict', methods=['POST'])
+@app.route('/predict', methods=['POST', 'OPTIONS'])
 def predict():
-    """Basic prediction endpoint"""
+    if request.method == 'OPTIONS':
+        return '', 204
     try:
         data = request.json
-        # Use original calculation logic
         return jsonify({
             'success': True,
             'prediction': calculate_price_ml(data),
@@ -307,13 +277,13 @@ def predict():
             'error': str(e)
         }), 400
 
-@app.route('/predict-ml', methods=['POST'])
+@app.route('/predict-ml', methods=['POST', 'OPTIONS'])
 def predict_ml():
-    """ML-enhanced prediction endpoint"""
+    if request.method == 'OPTIONS':
+        return '', 204
     try:
         data = request.json
         prediction = calculate_price_ml(data)
-        
         return jsonify({
             'success': True,
             'prediction': prediction,
@@ -327,7 +297,6 @@ def predict_ml():
 
 @app.route('/zones', methods=['GET'])
 def get_zones():
-    """Get all zones with detailed info"""
     return jsonify({
         'success': True,
         'zones': NAGPUR_ZONES
@@ -335,7 +304,6 @@ def get_zones():
 
 @app.route('/landmarks', methods=['GET'])
 def get_landmarks():
-    """Get all landmarks"""
     return jsonify({
         'success': True,
         'landmarks': list(LANDMARKS.keys())
@@ -343,22 +311,18 @@ def get_landmarks():
 
 @app.route('/market-trends', methods=['GET'])
 def market_trends():
-    """Get market trends with ML insights"""
     zone = request.args.get('zone', 'central')
-    
     zone_data = NAGPUR_ZONES.get(zone, NAGPUR_ZONES['central'])
     
-    # Generate historical data for last 12 months
     historical = []
     base_price = zone_data['base_price']
     for i in range(12, 0, -1):
         month_date = (datetime.now() - timedelta(days=30*i)).strftime('%Y-%m')
-        # Simulate price growth
         price = base_price * (1 - (i * zone_data['growth_rate'] / 1200))
         historical.append({
             'month': month_date,
             'avgPrice': int(price),
-            'transactions': np.random.randint(50, 150)
+            'transactions': int(np.random.randint(50, 150))
         })
     
     trends = {
@@ -389,7 +353,6 @@ def market_trends():
 
 @app.route('/historical-data', methods=['GET'])
 def historical_data():
-    """Get historical price data"""
     zone = request.args.get('zone', 'central')
     years = int(request.args.get('years', 5))
     
@@ -405,7 +368,7 @@ def historical_data():
             'avgPrice': int(year_price),
             'minPrice': int(year_price * 0.85),
             'maxPrice': int(year_price * 1.15),
-            'transactions': np.random.randint(500, 1500)
+            'transactions': int(np.random.randint(500, 1500))
         })
     
     return jsonify({
@@ -414,9 +377,10 @@ def historical_data():
         'data': data
     })
 
-@app.route('/investment-analysis', methods=['POST'])
+@app.route('/investment-analysis', methods=['POST', 'OPTIONS'])
 def investment_analysis():
-    """Analyze investment potential"""
+    if request.method == 'OPTIONS':
+        return '', 204
     try:
         data = request.json
         property_price = data.get('price', 5000000)
@@ -425,7 +389,6 @@ def investment_analysis():
         zone_data = NAGPUR_ZONES.get(zone, NAGPUR_ZONES['central'])
         growth_rate = zone_data['growth_rate'] / 100
         
-        # Calculate projections
         projections = []
         for year in range(1, 11):
             future_value = property_price * ((1 + growth_rate) ** year)
@@ -439,7 +402,6 @@ def investment_analysis():
                 'roi': round(roi, 2)
             })
         
-        # Calculate rental yield (assuming 3% of property value per year)
         annual_rent = property_price * 0.03
         rental_yield = 3.0
         
@@ -470,9 +432,10 @@ def investment_analysis():
             'error': str(e)
         }), 400
 
-@app.route('/roi-calculator', methods=['POST'])
+@app.route('/roi-calculator', methods=['POST', 'OPTIONS'])
 def roi_calculator():
-    """Calculate ROI and returns"""
+    if request.method == 'OPTIONS':
+        return '', 204
     try:
         data = request.json
         purchase_price = data.get('purchasePrice', 5000000)
@@ -482,13 +445,11 @@ def roi_calculator():
         zone_data = NAGPUR_ZONES.get(zone, NAGPUR_ZONES['central'])
         growth_rate = zone_data['growth_rate'] / 100
         
-        # Calculate future value
         future_value = purchase_price * ((1 + growth_rate) ** holding_period)
         total_appreciation = future_value - purchase_price
         total_roi = (total_appreciation / purchase_price) * 100
         annual_roi = total_roi / holding_period
         
-        # Calculate with rental income
         annual_rent = purchase_price * 0.03
         total_rent = annual_rent * holding_period
         total_returns = total_appreciation + total_rent
@@ -525,9 +486,10 @@ def roi_calculator():
             'error': str(e)
         }), 400
 
-@app.route('/compare', methods=['POST'])
+@app.route('/compare', methods=['POST', 'OPTIONS'])
 def compare_properties():
-    """Compare multiple properties"""
+    if request.method == 'OPTIONS':
+        return '', 204
     try:
         properties = request.json.get('properties', [])
         comparisons = []
@@ -539,12 +501,11 @@ def compare_properties():
                 'prediction': prediction
             })
         
-        # Add comparison insights
         prices = [c['prediction']['price'] for c in comparisons]
         insights = {
             'avgPrice': int(np.mean(prices)),
-            'minPrice': min(prices),
-            'maxPrice': max(prices),
+            'minPrice': int(min(prices)),
+            'maxPrice': int(max(prices)),
             'priceVariation': round((max(prices) - min(prices)) / np.mean(prices) * 100, 2),
             'bestValue': comparisons[prices.index(min(prices))]['property'].get('location', 'Unknown'),
             'premium': comparisons[prices.index(max(prices))]['property'].get('location', 'Unknown')
@@ -562,16 +523,13 @@ def compare_properties():
         }), 400
 
 def calculate_investment_score(zone_data):
-    """Calculate investment score out of 100"""
     growth_score = min(zone_data['growth_rate'] * 4, 60)
     demand_score = zone_data['demand_index'] * 0.25
     supply_score = (100 - zone_data['supply_index']) * 0.15
-    
     total_score = growth_score + demand_score + supply_score
     return round(min(total_score, 100), 1)
 
 def generate_recommendation(zone_data, price):
-    """Generate investment recommendation"""
     score = calculate_investment_score(zone_data)
     
     if score >= 85:
@@ -599,8 +557,16 @@ def generate_recommendation(zone_data, price):
             'action': 'WAIT'
         }
 
+# Health check endpoint
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({
+        'status': 'healthy',
+        'ml_model': 'active',
+        'timestamp': datetime.now().isoformat()
+    })
+
 if __name__ == '__main__':
-    import os
     port = int(os.environ.get('PORT', 5000))
     print("🚀 Starting Homeverse AI Backend API v2.0...")
     print("🤖 Machine Learning Model: ACTIVE")
