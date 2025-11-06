@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: homeverse-backend
+    env: python
+    rootDir: homeverse-backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      PYTHON_VERSION: 3.10.13
