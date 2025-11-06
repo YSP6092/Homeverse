@@ -26,7 +26,14 @@ except Exception as e:
     print("❌ MongoDB connection failed:", str(e))
     db = None
 app = Flask(__name__)
-CORS(app)
+# Update the CORS line
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",  # We'll restrict this after deployment
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
 # Initialize ML model
 class PropertyPricePredictor:
@@ -593,7 +600,9 @@ def generate_recommendation(zone_data, price):
         }
 
 if __name__ == '__main__':
+    import os
+    port = int(os.environ.get('PORT', 5000))
     print("🚀 Starting Homeverse AI Backend API v2.0...")
     print("🤖 Machine Learning Model: ACTIVE")
-    print("📍 Server running on http://localhost:5000")
-    app.run(debug=True, port=5000, threaded=True)
+    print(f"📍 Server running on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)

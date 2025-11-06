@@ -1,14 +1,29 @@
+# Frontend
 homeverse-frontend/node_modules/
 homeverse-frontend/build/
 homeverse-frontend/.env.local
 homeverse-frontend/.env
+homeverse-frontend/.env.production
+
+# Backend
 homeverse-backend/venv/
 homeverse-backend/__pycache__/
 homeverse-backend/*.pyc
 homeverse-backend/.env
-DS_Store
+homeverse-backend/*.log
+
+# OS Files
+.DS_Store
 Thumbs.db
-.vscode/
-.idea/
 *.swp
 *.swo
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
